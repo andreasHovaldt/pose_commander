@@ -68,7 +68,7 @@ class PoseCommander(Node):
         self.callback_group4.add_entity(self.trajectory_execution_timer)
 
         # Pose publisher
-        self.state_pose_publisher = self.create_publisher(Pose, "/state_pose_left", 1)
+        self.state_pose_publisher = self.create_publisher(Pose, "/left_state_pose", 1)
 
         # FOR SIMULATION
         self.sim_command = JointState()

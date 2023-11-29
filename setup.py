@@ -26,6 +26,7 @@ setup(
         "pose_commander = pose_commander.pose_commander:main",
         "pose_publisher = pose_commander.pose_publisher:main",
         "target_joints_publisher = pose_commander.target_joints_publisher:main",
+        "mission_executor = pose_commander.mission_executor:main",
         ],
     },
 )
