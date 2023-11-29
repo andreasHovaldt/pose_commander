@@ -1,4 +1,5 @@
 import os
+import time
 
 import kinpy
 import numpy as np
@@ -27,8 +28,6 @@ class PoseCommander(Node):
 
         self.callback_group1 = MutuallyExclusiveCallbackGroup()
         self.callback_group2 = MutuallyExclusiveCallbackGroup()
-        self.callback_group3 = MutuallyExclusiveCallbackGroup()
-        self.callback_group4 = MutuallyExclusiveCallbackGroup()
 
         # something to compute robot kinematics
         self.robot_description = xacro.process(
@@ -47,7 +46,7 @@ class PoseCommander(Node):
         elif robot_name == "right":
             self.kinematic_chain = kinpy.build_serial_chain_from_urdf(
                 data=self.robot_description,
-                root_link_name="table",
+                root_link_name="base_frame",
                 end_link_name="link_ee",
             )
         else:
@@ -73,7 +72,7 @@ class PoseCommander(Node):
 
         # Trajectory execution callback function
         self.trajectory_execution_timer = self.create_timer(0.03, self.execute_trajectory)
-        self.callback_group4.add_entity(self.trajectory_execution_timer)
+        self.callback_group2.add_entity(self.trajectory_execution_timer)
 
         # Pose publisher
         self.state_pose_publisher = self.create_publisher(Pose, f"/{robot_name}_state_pose", 1)
@@ -145,6 +144,7 @@ class PoseCommander(Node):
 
     # Callback function for lbr_state. Receives current joint angles and saves it. Also calculates the pose and publishes it to the state_pose topic.
     def update_joint_angles(self, lbr_state: LBRState) -> None:
+        self.get_logger().info("Running update_joint_angles")
         # get joint states
         self.joint_angles = lbr_state.measured_joint_position
 
@@ -300,16 +300,22 @@ class LLM_Executor_Server(Node):
         )
 
         self.right_pose_commander = PoseCommander(
-            "left_pose_commander", "right"
+            "right_pose_commander", "right"
         )
 
         # Make callback groups
-        self.callback_group_left_ = rclpy.callback_groups.MutuallyExclusiveCallbackGroup
-        self.callback_group_left_.add_entity(self.move_group_left_action_client_node)
-        self.callback_group_right_ = rclpy.callback_groups.MutuallyExclusiveCallbackGroup
-        self.callback_group_right_.add_entity(self.move_group_right_action_client_node)
-        self.callback_group_llm_ = rclpy.callback_groups.MutuallyExclusiveCallbackGroup
+        self.callback_group_left_ = ReentrantCallbackGroup()
+        self.callback_group_left_.add_entity(self.left_pose_commander)
+        self.callback_group_right_ = ReentrantCallbackGroup()
+        self.callback_group_right_.add_entity(self.right_pose_commander)
+        self.callback_group_llm_ = MutuallyExclusiveCallbackGroup()
         self.callback_group_llm_.add_entity(self.llm_executor_service_)
+
+        # Make executor
+        self.left_executor = MultiThreadedExecutor(4)
+        self.left_executor.add_node(self.left_pose_commander)
+        self.right_executor = MultiThreadedExecutor(4)
+        self.right_executor.add_node(self.right_pose_commander)
 
     def llm_service_callback(self, request, response):
 
@@ -333,6 +339,8 @@ class LLM_Executor_Server(Node):
 
                 self.left_pose_commander.plan_new_target(left_pose)
 
+
+
                 #
                 #
                 #
@@ -344,12 +352,14 @@ class LLM_Executor_Server(Node):
                 )
 
                 self.right_pose_commander.plan_new_target(right_pose)
+                while self.left_pose_commander.new_trajectory_flag or self.right_pose_commander.new_trajectory_flag:
+                    time.sleep(0.1)
 
             response.success = True
             response.message = "Executed without error."
 
         except Exception as e:
-            self.get_logger().error(f"Converting string to json faild with error: {e}")
+            self.get_logger().error(f"Converting string to json failed with error: {e}")
             response.success = False
             response.message = str(e)
 
@@ -357,8 +367,8 @@ class LLM_Executor_Server(Node):
 
 def main(args: list = None) -> None:
     rclpy.init(args=args)
-    executor = MultiThreadedExecutor(5)
-    CartesianMotionNode = PoseCommander("pose_commander")
+    executor = MultiThreadedExecutor(8)
+    CartesianMotionNode = LLM_Executor_Server()
     executor.add_node(CartesianMotionNode)
     try:
         executor.spin()
