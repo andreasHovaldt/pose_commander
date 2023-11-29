@@ -1,4 +1,5 @@
 import os
+import time
 
 import kinpy
 import numpy as np
@@ -12,10 +13,12 @@ from geometry_msgs.msg import Pose
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.callback_groups import ReentrantCallbackGroup, MutuallyExclusiveCallbackGroup
 
+# Service
+from custom_interfaces.srv import TargetPose
+
 # Used for visualisation in RVIZ
 from sensor_msgs.msg import JointState
 from std_msgs.msg import Header
-
 
 class PoseCommander(Node):
     def __init__(self, node_name: str) -> None:
@@ -49,13 +52,16 @@ class PoseCommander(Node):
         )
         self.callback_group1.add_entity(self.lbr_state_sub_)
 
+        # Service server for receiving new poses to move cartesian to
+        self.left_pose_commander_server = self.create_service(TargetPose, '/left_target_pose', self.plan_new_target)
+
         # Subscriber to new robot position
-        self.target_pose_sub = self.create_subscription(Pose, "/target_pose_left", self.plan_new_target, 1)
-        self.callback_group2.add_entity(self.target_pose_sub)
+        #self.target_pose_sub = self.create_subscription(Pose, "/target_pose_left", self.plan_new_target, 1)
+        #self.callback_group2.add_entity(self.target_pose_sub)
 
         # Subscriber to new robot angles
-        self.target_joints_sub = self.create_subscription(LBRPositionCommand, "/target_joints_left", self.plan_new_joint_target, 1)
-        self.callback_group3.add_entity(self.target_joints_sub)
+        #self.target_joints_sub = self.create_subscription(LBRPositionCommand, "/target_joints_left", self.plan_new_joint_target, 1)
+        #self.callback_group3.add_entity(self.target_joints_sub)
 
         # Trajectory execution callback function
         self.trajectory_execution_timer = self.create_timer(0.03, self.execute_trajectory)
@@ -96,7 +102,11 @@ class PoseCommander(Node):
     # 8. Make trajectory generation and execution function as third degree polynomials, and time a variable
 
     # Solves forward kinematics from the newest joint_angles, then converts orientation, creates new trajectory and marks this with a flag
-    def plan_new_target(self, msg):
+    def plan_new_target(self, request, response):
+
+        self.get_logger().info("Planning new target")
+
+        msg = request
         # Compute forward kinematics
         fk = self.kinematic_chain.forward_kinematics(self.joint_angles)
         euler_rotation = self.quaternion_to_euler(fk.rot)
@@ -114,6 +124,12 @@ class PoseCommander(Node):
             self.new_trajectory_flag = True # Mark that a new trajectory is live
         else:
             self.get_logger().error(f"Invalid target. Target pose {target_pose} is not within the security box")
+
+        while self.new_trajectory_flag == True:
+            time.sleep(0.1)
+
+        response.success = True
+        return response
 
     def plan_new_joint_target(self, msg):
         self.get_logger().info(f"Joint target looks like this: {msg.joint_position}")
