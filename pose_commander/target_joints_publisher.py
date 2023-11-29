@@ -28,6 +28,7 @@ class JointsPublisher(Node):
 	    	msg.joint_position = [0.57, 0.28, -0.31, -1.25, -0.10, 1.40, 0.0]
 	    	
 	    	self.target_joints_pub.publish(msg)
+	    	self.run_once_flag = False
 
     def quaternion_to_euler(self, q):
         w, x, y, z = q
