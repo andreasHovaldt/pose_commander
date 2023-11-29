@@ -292,32 +292,29 @@ class LLM_Executor_Server(Node):
     def __init__(self):
         super().__init__("LLM_Executor_Server")
 
+
         self.llm_executor_service_ = self.create_service(BimanualJson, "llm_executor", self.llm_service_callback)
 
-        # Add an instance of PoseCommander for each robot
-        self.left_pose_commander = PoseCommander(
-            "left_pose_commander", "left"
-        )
-
-        self.right_pose_commander = PoseCommander(
-            "right_pose_commander", "right"
-        )
+        # service clients
+        #self.left_pose_commander_client = self.create_client(Pose, "left_target_pose")
+        #self.right_pose_commander_client = self.create_client(Pose, "right_target_pose")
 
         # Make callback groups
-        self.callback_group_left_ = ReentrantCallbackGroup()
-        self.callback_group_left_.add_entity(self.left_pose_commander)
-        self.callback_group_right_ = ReentrantCallbackGroup()
-        self.callback_group_right_.add_entity(self.right_pose_commander)
         self.callback_group_llm_ = MutuallyExclusiveCallbackGroup()
         self.callback_group_llm_.add_entity(self.llm_executor_service_)
 
-        # Make executor
-        self.left_executor = MultiThreadedExecutor(4)
-        self.left_executor.add_node(self.left_pose_commander)
-        self.right_executor = MultiThreadedExecutor(4)
-        self.right_executor.add_node(self.right_pose_commander)
+        # Wait for service to become available
+        #while not self.left_pose_commander_client.wait_for_service(timeout_sec=1.0):
+        #    self.get_logger().info('left_pose_commander service not available, waiting again...')
+        #while not self.right_pose_commander_client.wait_for_service(timeout_sec=1.0):
+        #    self.get_logger().info('right_pose_commander service not available, waiting again...')
+
+    def left_send_request(self, Pose):
+        pass
 
     def llm_service_callback(self, request, response):
+        global left_pose_commander
+        global right_pose_commander
 
         try:
             self.steps = json.loads(request)
@@ -337,7 +334,7 @@ class LLM_Executor_Server(Node):
                                            w=left_orientation[3]),
                 )
 
-                self.left_pose_commander.plan_new_target(left_pose)
+                left_pose_commander.plan_new_target(left_pose)
 
 
 
@@ -351,7 +348,7 @@ class LLM_Executor_Server(Node):
                                            w=right_orientation[3]),
                 )
 
-                self.right_pose_commander.plan_new_target(right_pose)
+                right_pose_commander.plan_new_target(right_pose)
                 while self.left_pose_commander.new_trajectory_flag or self.right_pose_commander.new_trajectory_flag:
                     time.sleep(0.1)
 
@@ -367,16 +364,28 @@ class LLM_Executor_Server(Node):
 
 def main(args: list = None) -> None:
     rclpy.init(args=args)
-    executor = MultiThreadedExecutor(8)
-    CartesianMotionNode = LLM_Executor_Server()
-    executor.add_node(CartesianMotionNode)
+
+    # Create executors
+    executor_left = MultiThreadedExecutor()
+    executor_right = MultiThreadedExecutor()
+    executor_llm = MultiThreadedExecutor(4)
+
+    # Create instances of the classes
+    llm_node = LLM_Executor_Server()
+    global left_pose_commander
+    left_pose_commander = PoseCommander('left_pose_commander', 'left')
+    global right_pose_commander
+    right_pose_commander = PoseCommander('right_pose_commander', 'right')
+
+
     try:
-        executor.spin()
+        rclpy.spin(llm_node, executor_llm)
+        rclpy.spin(left_pose_commander, executor_left)
+        rclpy.spin(right_pose_commander, executor_right)
     finally:
         # Cleanup code, if any
-        CartesianMotionNode.destroy_node()
+        llm_node.destroy_node()
         rclpy.shutdown()
-
 
     rclpy.init(args=args)
     rclpy.spin()
