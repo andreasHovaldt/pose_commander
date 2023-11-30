@@ -5,7 +5,7 @@ def generate_launch_description():
 	return LaunchDescription([
 		Node(
 			package="pose_commander",
-			executable="pose_commander",
+			executable="pose_commander_left",
 			output="screen"
-		),
+		), Node(package="pose_commander", executable="pose_commander_right", output="screen"),
 	])

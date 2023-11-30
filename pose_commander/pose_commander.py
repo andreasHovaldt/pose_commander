@@ -9,73 +9,66 @@ import xacro
 from ament_index_python import get_package_share_directory
 from lbr_fri_msgs.msg import LBRPositionCommand, LBRState
 from rclpy.node import Node
-from geometry_msgs.msg import Point, Pose, Quaternion
+from geometry_msgs.msg import Pose
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.callback_groups import ReentrantCallbackGroup, MutuallyExclusiveCallbackGroup
 
-# Import for LLM service server
-import json
-from custom_interfaces.srv import BimanualJson
+# Service
+from custom_interfaces.srv import TargetPose
 
 # Used for visualisation in RVIZ
 from sensor_msgs.msg import JointState
 from std_msgs.msg import Header
 
-
 class PoseCommander(Node):
-    def __init__(self, node_name: str, robot_name: str) -> None:
+    def __init__(self, node_name: str) -> None:
         super().__init__(node_name)
 
         self.callback_group1 = MutuallyExclusiveCallbackGroup()
         self.callback_group2 = MutuallyExclusiveCallbackGroup()
+        self.callback_group3 = MutuallyExclusiveCallbackGroup()
+        self.callback_group4 = MutuallyExclusiveCallbackGroup()
 
         # something to compute robot kinematics
         self.robot_description = xacro.process(
             os.path.join(
                 get_package_share_directory("lbr_description"),
-                f"urdf/{robot_name}_arm/{robot_name}_arm.urdf.xacro",
+                "urdf/left_arm/left_arm.urdf.xacro",
             )
         )
-
-        if robot_name == "left":
-            self.kinematic_chain = kinpy.build_serial_chain_from_urdf(
-                data=self.robot_description,
-                root_link_name="table",
-                end_link_name="tool0",
-            )
-        elif robot_name == "right":
-            self.kinematic_chain = kinpy.build_serial_chain_from_urdf(
-                data=self.robot_description,
-                root_link_name="base_frame",
-                end_link_name="link_ee",
-            )
-        else:
-            raise TypeError(f"{robot_name} is an invalid robot name. Choices are 'left' or 'right'")
+        self.kinematic_chain = kinpy.build_serial_chain_from_urdf(
+            data=self.robot_description,
+            root_link_name="table",
+            end_link_name="tool0",
+        )
 
         # publisher / subscriber to command robot
         self.lbr_position_command_ = LBRPositionCommand()
         self.lbr_position_command_pub_ = self.create_publisher(
-            LBRPositionCommand, f"/{robot_name}/command/position", 1
+            LBRPositionCommand, "/left/command/position", 1
         )
         self.lbr_state_sub_ = self.create_subscription(
-            LBRState, f"/{robot_name}/state", self.update_joint_angles, 1
+            LBRState, "/left/state", self.update_joint_angles, 1
         )
         self.callback_group1.add_entity(self.lbr_state_sub_)
 
-        # Subscriber to new robot position - THIS IS DELETED
+        # Service server for receiving new poses to move cartesian to
+        self.left_pose_commander_server = self.create_service(TargetPose, '/left_target_pose', self.plan_new_target)
+
+        # Subscriber to new robot position
         #self.target_pose_sub = self.create_subscription(Pose, "/target_pose_left", self.plan_new_target, 1)
         #self.callback_group2.add_entity(self.target_pose_sub)
 
-        # Subscriber to new robot angles - THIS IS DELETED
+        # Subscriber to new robot angles
         #self.target_joints_sub = self.create_subscription(LBRPositionCommand, "/target_joints_left", self.plan_new_joint_target, 1)
         #self.callback_group3.add_entity(self.target_joints_sub)
 
         # Trajectory execution callback function
         self.trajectory_execution_timer = self.create_timer(0.03, self.execute_trajectory)
-        self.callback_group2.add_entity(self.trajectory_execution_timer)
+        self.callback_group4.add_entity(self.trajectory_execution_timer)
 
         # Pose publisher
-        self.state_pose_publisher = self.create_publisher(Pose, f"/{robot_name}_state_pose", 1)
+        self.state_pose_publisher = self.create_publisher(Pose, "/left_state_pose", 1)
 
         # FOR SIMULATION
         self.sim_command = JointState()
@@ -109,16 +102,20 @@ class PoseCommander(Node):
     # 8. Make trajectory generation and execution function as third degree polynomials, and time a variable
 
     # Solves forward kinematics from the newest joint_angles, then converts orientation, creates new trajectory and marks this with a flag
-    def plan_new_target(self, received_pose):
+    def plan_new_target(self, request, response):
+
+        self.get_logger().info("Planning new target")
+
+        msg = request
         # Compute forward kinematics
         fk = self.kinematic_chain.forward_kinematics(self.joint_angles)
         euler_rotation = self.quaternion_to_euler(fk.rot)
         start_pose = [fk.pos[0], fk.pos[1], fk.pos[2], euler_rotation[0], euler_rotation[1], euler_rotation[2]] # Use the fk to get pose
 
         # Convert target_pose to euler angles
-        target_pose_quat = [received_pose.orientation.x, received_pose.orientation.y, received_pose.orientation.z, received_pose.orientation.w]
+        target_pose_quat = [msg.orientation.x, msg.orientation.y, msg.orientation.z, msg.orientation.w]
         target_pose_eul = self.quaternion_to_euler(target_pose_quat)
-        target_pose = [received_pose.position.x, received_pose.position.y, received_pose.position.z, target_pose_eul[0], target_pose_eul[1], target_pose_eul[2]]
+        target_pose = [msg.position.x, msg.position.y, msg.position.z, target_pose_eul[0], target_pose_eul[1], target_pose_eul[2]]
 
         # Perform security check, to make sure the target is inside the security box
         if self.security_check(target_pose) == True:
@@ -128,7 +125,12 @@ class PoseCommander(Node):
         else:
             self.get_logger().error(f"Invalid target. Target pose {target_pose} is not within the security box")
 
-    # Takes joint angles in radians in the form of a float list: [joint1, joint2, joint3, joint4, joint5, joint6, joint7]
+        while self.new_trajectory_flag == True:
+            time.sleep(0.1)
+
+        response.success = True
+        return response
+
     def plan_new_joint_target(self, msg):
         self.get_logger().info(f"Joint target looks like this: {msg.joint_position}")
         joint_target = msg.joint_position
@@ -144,7 +146,6 @@ class PoseCommander(Node):
 
     # Callback function for lbr_state. Receives current joint angles and saves it. Also calculates the pose and publishes it to the state_pose topic.
     def update_joint_angles(self, lbr_state: LBRState) -> None:
-        self.get_logger().info("Running update_joint_angles")
         # get joint states
         self.joint_angles = lbr_state.measured_joint_position
 
@@ -286,89 +287,10 @@ class PoseCommander(Node):
         self.get_logger().info(f"Trajectory shape: {np.shape(trajectory)}")
 
         return trajectory
-
-
-class LLM_Executor_Server(Node):
-    def __init__(self):
-        super().__init__("LLM_Executor_Server")
-
-        self.llm_executor_service_ = self.create_service(BimanualJson, "llm_executor", self.llm_service_callback)
-
-        # Add an instance of PoseCommander for each robot
-        self.left_pose_commander = PoseCommander(
-            "left_pose_commander", "left"
-        )
-
-        self.right_pose_commander = PoseCommander(
-            "right_pose_commander", "right"
-        )
-
-        # Make callback groups
-        self.callback_group_left_ = ReentrantCallbackGroup()
-        self.callback_group_left_.add_entity(self.left_pose_commander)
-        self.callback_group_right_ = ReentrantCallbackGroup()
-        self.callback_group_right_.add_entity(self.right_pose_commander)
-        self.callback_group_llm_ = MutuallyExclusiveCallbackGroup()
-        self.callback_group_llm_.add_entity(self.llm_executor_service_)
-
-        # Make executor
-        self.left_executor = MultiThreadedExecutor(4)
-        self.left_executor.add_node(self.left_pose_commander)
-        self.right_executor = MultiThreadedExecutor(4)
-        self.right_executor.add_node(self.right_pose_commander)
-
-    def llm_service_callback(self, request, response):
-
-        try:
-            self.steps = json.loads(request)
-
-            for step in self.steps:
-                left_coordinates = self.steps[step]["left_ee_coor"]
-                right_coordinates = self.steps[step]["right_ee_coor"]
-                left_orientation = self.steps[step]["left_ee_orientation"]
-                right_orientation = self.steps[step]["right_ee_orientation"]
-                left_gripper = self.steps[step]["left_gripper_state"]
-                right_gripper = self.steps[step]["right_gripper_state"]
-
-                # Make plan for left arm and execute
-                left_pose = Pose(
-                    position=Point(x=left_coordinates[0], y=left_coordinates[1], z=left_coordinates[2]),
-                    orientation=Quaternion(x=left_orientation[0], y=left_orientation[1], z=left_coordinates[2],
-                                           w=left_orientation[3]),
-                )
-
-                self.left_pose_commander.plan_new_target(left_pose)
-
-
-
-                #
-                #
-                #
-                # Make plan for right arm and execute
-                right_pose = Pose(
-                    position=Point(x=right_coordinates[0], y=right_coordinates[1], z=right_coordinates[2]),
-                    orientation=Quaternion(x=right_orientation[0], y=right_orientation[1], z=right_coordinates[2],
-                                           w=right_orientation[3]),
-                )
-
-                self.right_pose_commander.plan_new_target(right_pose)
-                while self.left_pose_commander.new_trajectory_flag or self.right_pose_commander.new_trajectory_flag:
-                    time.sleep(0.1)
-
-            response.success = True
-            response.message = "Executed without error."
-
-        except Exception as e:
-            self.get_logger().error(f"Converting string to json failed with error: {e}")
-            response.success = False
-            response.message = str(e)
-
-        return response
-
 def main(args: list = None) -> None:
     rclpy.init(args=args)
-    executor = MultiThreadedExecutor(8)
-    CartesianMotionNode = LLM_Executor_Server()
+    executor = MultiThreadedExecutor(5)
+    CartesianMotionNode = PoseCommander("pose_commander")
     executor.add_node(CartesianMotionNode)
     try:
         executor.spin()

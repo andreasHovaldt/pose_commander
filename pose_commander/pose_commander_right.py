@@ -24,51 +24,43 @@ class PoseCommander(Node):
     def __init__(self, node_name: str) -> None:
         super().__init__(node_name)
 
-        self.callback_group1 = ReentrantCallbackGroup()
-        self.callback_group2 = ReentrantCallbackGroup()
+        self.callback_group1 = MutuallyExclusiveCallbackGroup()
+        self.callback_group2 = MutuallyExclusiveCallbackGroup()
         self.callback_group3 = MutuallyExclusiveCallbackGroup()
+        self.callback_group4 = MutuallyExclusiveCallbackGroup()
 
         # something to compute robot kinematics
         self.robot_description = xacro.process(
             os.path.join(
                 get_package_share_directory("lbr_description"),
-                "urdf/left_arm/left_arm.urdf.xacro",
+                "urdf/right_arm/right_arm.urdf.xacro",
             )
         )
         self.kinematic_chain = kinpy.build_serial_chain_from_urdf(
             data=self.robot_description,
             root_link_name="table",
-            end_link_name="tool0",
+            end_link_name="link_ee",
         )
 
         # publisher / subscriber to command robot
         self.lbr_position_command_ = LBRPositionCommand()
         self.lbr_position_command_pub_ = self.create_publisher(
-            LBRPositionCommand, "/left/command/position", 1
+            LBRPositionCommand, "/right/command/position", 1
         )
         self.lbr_state_sub_ = self.create_subscription(
-            LBRState, "/left/state", self.update_joint_angles, 1
+            LBRState, "/right/state", self.update_joint_angles, 1
         )
         self.callback_group1.add_entity(self.lbr_state_sub_)
 
         # Service server for receiving new poses to move cartesian to
-        self.left_pose_commander_server = self.create_service(TargetPose, '/left_target_pose', self.plan_new_target)
-        self.callback_group2.add_entity(self.left_pose_commander_server)
-
-        # Subscriber to new robot position
-        #self.target_pose_sub = self.create_subscription(Pose, "/target_pose_left", self.plan_new_target, 1)
-        #self.callback_group2.add_entity(self.target_pose_sub)
-
-        # Subscriber to new robot angles
-        #self.target_joints_sub = self.create_subscription(LBRPositionCommand, "/target_joints_left", self.plan_new_joint_target, 1)
-        #self.callback_group3.add_entity(self.target_joints_sub)
+        self.right_pose_commander_server = self.create_service(TargetPose, '/right_target_pose', self.plan_new_target)
 
         # Trajectory execution callback function
         self.trajectory_execution_timer = self.create_timer(0.03, self.execute_trajectory)
-        self.callback_group3.add_entity(self.trajectory_execution_timer)
+        self.callback_group4.add_entity(self.trajectory_execution_timer)
 
         # Pose publisher
-        self.state_pose_publisher = self.create_publisher(Pose, "/left_state_pose", 1)
+        self.state_pose_publisher = self.create_publisher(Pose, "/right_state_pose", 1)
 
         # FOR SIMULATION
         self.sim_command = JointState()
@@ -89,7 +81,6 @@ class PoseCommander(Node):
 
         # New trajectory flag - SHOULD BE FALSE BY DEFAULT. IF TRUE, THAT WAS FOR TESTING. SET TO FALSE!!!!!
         self.new_trajectory_flag = False
-        self.trajectory_finished = False
         self.new_joint_trajectory_flag = False
 
     # List of improvements
@@ -104,14 +95,14 @@ class PoseCommander(Node):
 
     # Solves forward kinematics from the newest joint_angles, then converts orientation, creates new trajectory and marks this with a flag
     def plan_new_target(self, request, response):
-        self.trajectory_finished = False
+
         self.get_logger().info("Planning new target")
 
         msg = request
         # Compute forward kinematics
         fk = self.kinematic_chain.forward_kinematics(self.joint_angles)
         euler_rotation = self.quaternion_to_euler(fk.rot)
-        start_pose = [fk.pos[0], fk.pos[1], fk.pos[2], euler_rotation[0], euler_rotation[1], euler_rotation[2]] # Use the fk to get pose
+        start_pose = [fk.pos[0], fk.pos[1], fk.pos[2], euler_rotation[0], euler_rotation[1], euler_rotation[2]]  # Use the fk to get pose
 
         # Convert target_pose to euler angles
         target_pose_quat = [msg.qx, msg.qy, msg.qz, msg.qw]
@@ -123,18 +114,13 @@ class PoseCommander(Node):
             # Generate trajectory
             self.trajectory = self.generate_cartesian_trajectory(start_pose, target_pose)
             self.new_trajectory_flag = True # Mark that a new trajectory is live
-            self.get_logger().info("New trajectory is live")
         else:
             self.get_logger().error(f"Invalid target. Target pose {target_pose} is not within the security box")
 
-
-        self.get_logger().info(f'State of flag: {self.trajectory_finished}')
-        while self.trajectory_finished == False:
+        while self.new_trajectory_flag == True:
             time.sleep(0.1)
-            self.get_logger().info(f'Inside while loop...')
 
         response.success = True
-        self.get_logger().info(f"Returning response: {response}")
         return response
 
     def plan_new_joint_target(self, msg):
@@ -173,9 +159,8 @@ class PoseCommander(Node):
 
     # Function which executes trajectories. Cartesian trajectories take priority if multiple trajectories are live.
     def execute_trajectory(self):
-        #self.get_logger().info("Checking for new trajectory")
         if self.new_trajectory_flag == True:
-            self.get_logger().info(f"Executing iteration nr: {self.t_iterator}")
+            # self.get_logger().info(f"Executing iteration nr: {self.t_iterator}")
 
             # Avoid conflicting trajectories, and deny the new joint trajectory, if there is any
             self.new_joint_trajectory_flag = False
@@ -202,7 +187,6 @@ class PoseCommander(Node):
                 self.t_iterator = 0
                 self.trajectory = 0
                 self.new_trajectory_flag = False
-                self.trajectory_finished = True
             # If movement is not complete, increase iterator by one
             else:
                 # Increase iterator
@@ -243,7 +227,7 @@ class PoseCommander(Node):
 
         # Find length of path, and define interpolations proportional to this
         length = np.sqrt(np.sum(np.power(np.subtract(end_pose[0:3], start_pose[0:3]), 2)))
-        interpolations = int(gain*length + 1)
+        interpolations = int(gain*length)
         self.get_logger().info(f"Interpolations: {interpolations}, Length: {length}")
 
         # Define the size of the increment
@@ -297,8 +281,8 @@ class PoseCommander(Node):
         return trajectory
 def main(args: list = None) -> None:
     rclpy.init(args=args)
-    executor = MultiThreadedExecutor()
-    CartesianMotionNode = PoseCommander("pose_commander_left")
+    executor = MultiThreadedExecutor(5)
+    CartesianMotionNode = PoseCommander("pose_commander_right")
     executor.add_node(CartesianMotionNode)
     try:
         executor.spin()
