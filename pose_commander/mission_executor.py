@@ -29,18 +29,20 @@ class LeftPoseCommanderClient(Node):
         return self.future.result()
 
 class RightPoseCommanderClient(Node):
-    def __int__(self):
-        super().__int__("right_pose_commander_client")
+    def __init__(self):
+        super().__init__("right_pose_commander_client")
         self.right_pose_commander_client = self.create_client(TargetPose, '/right_target_pose')
-
         while not self.right_pose_commander_client.wait_for_service(timeout_sec=1.0):
             self.get_logger().info('pose_commander_right service not available, waiting again...')
 
     def send_request_right(self, Pose):
         #msg = TargetPose.Request()
         msg = Pose
+        self.get_logger().info("Sending request to right arm")
         self.future = self.right_pose_commander_client.call_async(msg)
-        rclpy.spin_until_future_complete(self, self.future)
+        self.get_logger().info("Sent request. Waiting for future to complete")
+        rclpy.spin_until_future_complete(node=self, future=self.future)
+        self.get_logger().info("Future complete")
         return self.future.result()
 
 
