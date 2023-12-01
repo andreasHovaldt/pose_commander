@@ -64,8 +64,8 @@ class PoseCommander(Node):
         #self.callback_group3.add_entity(self.target_joints_sub)
 
         # Trajectory execution callback function
-        self.trajectory_execution_timer = self.create_timer(0.03, self.execute_trajectory)
-        self.callback_group3.add_entity(self.trajectory_execution_timer)
+        #self.trajectory_execution_timer = self.create_timer(0.03, self.execute_trajectory)
+        #self.callback_group3.add_entity(self.trajectory_execution_timer)
 
         # Pose publisher
         self.state_pose_publisher = self.create_publisher(Pose, "/left_state_pose", 1)
@@ -127,11 +127,8 @@ class PoseCommander(Node):
         else:
             self.get_logger().error(f"Invalid target. Target pose {target_pose} is not within the security box")
 
-
-        self.get_logger().info(f'State of flag: {self.trajectory_finished}')
-        while self.trajectory_finished == False:
-            time.sleep(0.1)
-            self.get_logger().info(f'Inside while loop...')
+        # Execute the trajectory
+        self.execute_trajectory()
 
         response.success = True
         self.get_logger().info(f"Returning response: {response}")
@@ -172,9 +169,14 @@ class PoseCommander(Node):
 
 
     # Function which executes trajectories. Cartesian trajectories take priority if multiple trajectories are live.
-    def execute_trajectory(self):
+    def execute_trajectory(self, loop_time=0.003):
         #self.get_logger().info("Checking for new trajectory")
-        if self.new_trajectory_flag == True:
+        while self.new_trajectory_flag == True:
+
+            # Timers for guaranteeing at least 3ms (or whatever loop time is specified as) between each iteration of the loop
+            start_time = time.time()
+            end_time = start_time + loop_time
+
             self.get_logger().info(f"Executing iteration nr: {self.t_iterator}")
 
             # Avoid conflicting trajectories, and deny the new joint trajectory, if there is any
@@ -208,33 +210,36 @@ class PoseCommander(Node):
                 # Increase iterator
                 self.t_iterator = self.t_iterator + 1
 
-        # If no cartesian trajectory is planned, execute joint trajectory (if any)
-        elif self.new_joint_trajectory_flag == True:
-            self.get_logger().info(f"Executing run nr. {self.t_iterator}")
-            new_joint_angles = self.joint_trajectory[self.t_iterator]
-            self.get_logger().info(f"New_joint_angles: {new_joint_angles}")
-
-            # Publish new joint angles
-            self.lbr_position_command_.joint_position = new_joint_angles.tolist()
-            self.lbr_position_command_pub_.publish(self.lbr_position_command_)
-
-            # Publish new joint angles to rviz2
-            self.sim_command.position = new_joint_angles.tolist()  # [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
-            self.sim_command.name = ["A1", "A2", "A3", "A4", "A5", "A6", "A7"]
-            header = Header()
-            header.stamp = self.get_clock().now().to_msg()
-            self.sim_command.header = header
-            self.sim_command_pub.publish(self.sim_command)
-
-            # Check if movement is complete. If true, then set flag to false and reset the trajectory and iterator
-            if self.t_iterator == np.size(self.joint_trajectory, 0)-1:
-                self.t_iterator = 0
-                self.joint_trajectory = 0
-                self.new_joint_trajectory_flag = False
-            # If movement is not complete, increase iterator by one
-            else:
-                # Increase iterator
-                self.t_iterator = self.t_iterator + 1
+            while time.time() < end_time:
+                pass
+        #
+        # # If no cartesian trajectory is planned, execute joint trajectory (if any)
+        # elif self.new_joint_trajectory_flag == True:
+        #     self.get_logger().info(f"Executing run nr. {self.t_iterator}")
+        #     new_joint_angles = self.joint_trajectory[self.t_iterator]
+        #     self.get_logger().info(f"New_joint_angles: {new_joint_angles}")
+        #
+        #     # Publish new joint angles
+        #     self.lbr_position_command_.joint_position = new_joint_angles.tolist()
+        #     self.lbr_position_command_pub_.publish(self.lbr_position_command_)
+        #
+        #     # Publish new joint angles to rviz2
+        #     self.sim_command.position = new_joint_angles.tolist()  # [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+        #     self.sim_command.name = ["A1", "A2", "A3", "A4", "A5", "A6", "A7"]
+        #     header = Header()
+        #     header.stamp = self.get_clock().now().to_msg()
+        #     self.sim_command.header = header
+        #     self.sim_command_pub.publish(self.sim_command)
+        #
+        #     # Check if movement is complete. If true, then set flag to false and reset the trajectory and iterator
+        #     if self.t_iterator == np.size(self.joint_trajectory, 0)-1:
+        #         self.t_iterator = 0
+        #         self.joint_trajectory = 0
+        #         self.new_joint_trajectory_flag = False
+        #     # If movement is not complete, increase iterator by one
+        #     else:
+        #         # Increase iterator
+        #         self.t_iterator = self.t_iterator + 1
 
 
     # Generates a linear trajectory from start_pose to end_pose. Number of interpolations scales with length,
