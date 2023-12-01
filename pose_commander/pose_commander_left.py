@@ -244,7 +244,7 @@ class PoseCommander(Node):
 
     # Generates a linear trajectory from start_pose to end_pose. Number of interpolations scales with length,
     # and is dependent on the gain.
-    def generate_cartesian_trajectory(self, start_pose, end_pose, gain=200):
+    def old_generate_cartesian_trajectory(self, start_pose, end_pose, gain=200):
 
         # Find length of path, and define interpolations proportional to this
         length = np.sqrt(np.sum(np.power(np.subtract(end_pose[0:3], start_pose[0:3]), 2)))
@@ -263,6 +263,17 @@ class PoseCommander(Node):
             trajectory[i] = np.add(start_pose, np.multiply(increment, i + 1))
 
         return trajectory
+
+    def generate_cartesian_trajectory(self, start_pose, end_pose, gain=200):
+
+        # Find length of path, and define interpolations proportional to this
+        length = np.sqrt(np.sum(np.power(np.subtract(end_pose[0:3], start_pose[0:3]), 2)))
+        interpolations = int(gain * length + 1)
+        self.get_logger().info(f"Interpolations: {interpolations}, Length: {length}")
+
+        position_increment = np.subtract(end_pose[0:3], start_pose[0:3]) * (1 / interpolations)
+
+        
 
     def quaternion_to_euler(self, q):
         w, x, y, z = q
