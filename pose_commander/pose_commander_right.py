@@ -110,19 +110,17 @@ class PoseCommander(Node):
         msg = request
         # Compute forward kinematics
         fk = self.kinematic_chain.forward_kinematics(self.joint_angles)
-        euler_rotation = self.quaternion_to_euler(fk.rot)
-        start_pose = [fk.pos[0], fk.pos[1], fk.pos[2], euler_rotation[0], euler_rotation[1], euler_rotation[2]] # Use the fk to get pose
+        start_pose = [fk.pos[0], fk.pos[1], fk.pos[2], fk.rot[0], fk.rot[1], fk.rot[2],
+                      fk.rot[3]]  # Use the fk to get pose
 
         # Convert target_pose to euler angles
-        target_pose_quat = [msg.qx, msg.qy, msg.qz, msg.qw]
-        target_pose_eul = self.quaternion_to_euler(target_pose_quat)
-        target_pose = [msg.px, msg.py, msg.pz, target_pose_eul[0], target_pose_eul[1], target_pose_eul[2]]
+        target_pose = [msg.px, msg.py, msg.pz, msg.qx, msg.qy, msg.qz, msg.qw]
 
         # Perform security check, to make sure the target is inside the security box
         if self.security_check(target_pose) == True:
             # Generate trajectory
             self.trajectory = self.generate_cartesian_trajectory(start_pose, target_pose)
-            self.new_trajectory_flag = True # Mark that a new trajectory is live
+            self.new_trajectory_flag = True  # Mark that a new trajectory is live
             self.get_logger().info("New trajectory is live")
         else:
             self.get_logger().error(f"Invalid target. Target pose {target_pose} is not within the security box")
@@ -142,7 +140,8 @@ class PoseCommander(Node):
 
     # Function which performs security check. Returns True if desired_pose fits requirements and is safe. Returns false if not
     def security_check(self, desired_pose):
-        if np.all(np.less_equal(desired_pose[0:3], self.security_box[0, :])) and np.all(np.greater_equal(desired_pose[0:3], self.security_box[1, :])):
+        if np.all(np.less_equal(desired_pose[0:3], self.security_box[0, :])) and np.all(
+                np.greater_equal(desired_pose[0:3], self.security_box[1, :])):
             return True
         else:
             return False
@@ -167,10 +166,9 @@ class PoseCommander(Node):
 
         self.state_pose_publisher.publish(state_pose)
 
-
     # Function which executes trajectories. Cartesian trajectories take priority if multiple trajectories are live.
     def execute_trajectory(self, loop_time=0.003):
-        #self.get_logger().info("Checking for new trajectory")
+        # self.get_logger().info("Checking for new trajectory")
         while self.new_trajectory_flag == True:
 
             # Timers for guaranteeing at least 3ms (or whatever loop time is specified as) between each iteration of the loop
@@ -184,7 +182,8 @@ class PoseCommander(Node):
 
             # Import the newest pose to move to, according to the iterator. Perform inverse kinematics
             new_pose = self.trajectory[self.t_iterator]
-            new_pose = kinpy.Transform([new_pose[3], new_pose[4], new_pose[5]], [new_pose[0], new_pose[1], new_pose[2]])
+            new_pose = kinpy.Transform([new_pose[3], new_pose[4], new_pose[5], new_pose[6]],
+                                       [new_pose[0], new_pose[1], new_pose[2]])
             new_joint_angles = self.kinematic_chain.inverse_kinematics(new_pose, self.joint_angles)
 
             # Publish new joint angles
@@ -192,7 +191,7 @@ class PoseCommander(Node):
             self.lbr_position_command_pub_.publish(self.lbr_position_command_)
 
             # Publish new joint angles to rviz2
-            self.sim_command.position = new_joint_angles.tolist() #[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+            self.sim_command.position = new_joint_angles.tolist()  # [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
             self.sim_command.name = ["A1", "A2", "A3", "A4", "A5", "A6", "A7"]
             header = Header()
             header.stamp = self.get_clock().now().to_msg()
@@ -200,7 +199,7 @@ class PoseCommander(Node):
             self.sim_command_pub.publish(self.sim_command)
 
             # Check if movement is complete. If true, then set flag to false and reset the trajectory and iterator
-            if self.t_iterator == np.size(self.trajectory, 0)-1:
+            if self.t_iterator == np.size(self.trajectory, 0) - 1:
                 self.t_iterator = 0
                 self.trajectory = 0
                 self.new_trajectory_flag = False
@@ -241,14 +240,13 @@ class PoseCommander(Node):
         #         # Increase iterator
         #         self.t_iterator = self.t_iterator + 1
 
-
     # Generates a linear trajectory from start_pose to end_pose. Number of interpolations scales with length,
     # and is dependent on the gain.
-    def generate_cartesian_trajectory(self, start_pose, end_pose, gain=200):
+    def old_generate_cartesian_trajectory(self, start_pose, end_pose, gain=200):
 
         # Find length of path, and define interpolations proportional to this
         length = np.sqrt(np.sum(np.power(np.subtract(end_pose[0:3], start_pose[0:3]), 2)))
-        interpolations = int(gain*length + 1)
+        interpolations = int(gain * length + 1)
         self.get_logger().info(f"Interpolations: {interpolations}, Length: {length}")
 
         # Define the size of the increment
@@ -261,6 +259,44 @@ class PoseCommander(Node):
         for i in range(interpolations):
             # Add the increment to the start pose. It is i+1 in order to start the loop increment at 1 instead of 0
             trajectory[i] = np.add(start_pose, np.multiply(increment, i + 1))
+
+        return trajectory
+
+    def generate_cartesian_trajectory(self, start_pose, end_pose, gain=200):
+
+        # Find length of path, and define interpolations proportional to this
+        length = np.sqrt(np.sum(np.power(np.subtract(end_pose[0:3], start_pose[0:3]), 2)))
+        interpolations = int(gain * length + 1)
+        self.get_logger().info(f"Interpolations: {interpolations}, Length: {length}")
+
+        # The increment between each interpolation for position
+        position_increment = np.subtract(end_pose[0:3], start_pose[0:3]) * (1 / interpolations)
+
+        # Create an array to store the trajectory in position and quaternions.
+        trajectory = np.zeros([interpolations, 7])
+
+        # Interpolate position. Start from start pose, and add one increment for each interpolation
+        for i in range(interpolations):
+            # Add the increment to the start pose. It is i+1 in order to start the loop increment at 1 instead of 0
+            trajectory[i, 0:3] = np.add(start_pose[0:3], np.multiply(position_increment, i + 1))
+
+        # Define components necessary to interpolate rotation
+        start_pose_RotationObject = sp.spatial.transform.Rotation.from_quat(start_pose[3:7])
+        end_pose_RotationObject = sp.spatial.transform.Rotation.from_quat(end_pose[3:7])
+        combined_RotationObject = sp.spatial.transform.Rotation.concatenate(
+            [start_pose_RotationObject, end_pose_RotationObject])
+
+        slerp_object = sp.spatial.transform.Slerp([0, 1], combined_RotationObject)
+        interpolation_times = np.linspace(0, 1, interpolations)
+
+        rotation_interpolation = slerp_object(interpolation_times)
+        interpolated_quaternions = rotation_interpolation.as_quat()
+        self.get_logger().info(f"Rotation_interpolation: {interpolated_quaternions}")
+
+        for i in range(interpolations):
+            self.get_logger().info(
+                f"Trajectory shape: {np.shape(trajectory[i, 3:7])}, rotation shape: {np.shape(np.array(interpolated_quaternions[i]))}")
+            trajectory[i, 3:7] = interpolated_quaternions[i]
 
         return trajectory
 
@@ -288,9 +324,9 @@ class PoseCommander(Node):
         start_joints = self.joint_angles
 
         angular_displacement = np.sum(np.abs(np.subtract(target_joint_angles, start_joints)))
-        interpolations = int(angular_displacement*gain)
+        interpolations = int(angular_displacement * gain)
 
-        increment = np.subtract(target_joint_angles, start_joints) * (1/interpolations)
+        increment = np.subtract(target_joint_angles, start_joints) * (1 / interpolations)
 
         trajectory = np.zeros([interpolations, 7])
 
