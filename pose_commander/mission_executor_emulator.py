@@ -80,16 +80,16 @@ class LLM_Executor_Server(Node):
             # Make plan for left arm and execute
             left_pose = TargetPose.Request()
             self.get_logger().info("constructing target pose")
-            left_pose.px = float(0)
-            left_pose.py = float(0)
-            left_pose.pz = float(0)
-            left_pose.qx = float(0)
-            left_pose.qy = float(0)
-            left_pose.qz = float(0)
-            left_pose.qw = float(1)
+            left_pose.px = float(-0.0)
+            left_pose.py = float(0.3)
+            left_pose.pz = float(0.5)
+            left_pose.qx = float(-0.05161)
+            left_pose.qy = float(-0.093)
+            left_pose.qz = float(0.993)
+            left_pose.qw = float(0.0334)
 
-            #self.get_logger().info(f"sending left pose {left_pose}")
-            #self.send_request_left(left_pose)
+            self.get_logger().info(f"sending left pose {left_pose}")
+            self.send_request_left(left_pose)
     
             # Make plan for right arm and execute
             right_pose = TargetPose.Request()
@@ -100,8 +100,8 @@ class LLM_Executor_Server(Node):
             right_pose.qy = float(-0.093)
             right_pose.qz = float(0.993)
             right_pose.qw = float(0.0334)
-            self.get_logger().info(f"sending right pose {right_pose}")
-            self.send_request_right(right_pose)
+            #self.get_logger().info(f"sending right pose {right_pose}")
+            #self.send_request_right(right_pose)
 
             self.run_once = False
 

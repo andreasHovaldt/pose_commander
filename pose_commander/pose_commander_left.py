@@ -19,6 +19,7 @@ from custom_interfaces.srv import TargetPose
 # Used for visualisation in RVIZ
 from sensor_msgs.msg import JointState
 from std_msgs.msg import Header
+import scipy as sp
 
 class PoseCommander(Node):
     def __init__(self, node_name: str) -> None:
@@ -110,13 +111,10 @@ class PoseCommander(Node):
         msg = request
         # Compute forward kinematics
         fk = self.kinematic_chain.forward_kinematics(self.joint_angles)
-        euler_rotation = self.quaternion_to_euler(fk.rot)
-        start_pose = [fk.pos[0], fk.pos[1], fk.pos[2], euler_rotation[0], euler_rotation[1], euler_rotation[2]] # Use the fk to get pose
+        start_pose = [fk.pos[0], fk.pos[1], fk.pos[2], fk.rot[0], fk.rot[1], fk.rot[2], fk.rot[3]] # Use the fk to get pose
 
         # Convert target_pose to euler angles
-        target_pose_quat = [msg.qx, msg.qy, msg.qz, msg.qw]
-        target_pose_eul = self.quaternion_to_euler(target_pose_quat)
-        target_pose = [msg.px, msg.py, msg.pz, target_pose_eul[0], target_pose_eul[1], target_pose_eul[2]]
+        target_pose = [msg.px, msg.py, msg.pz, msg.qx, msg.qy, msg.qz, msg.qw]
 
         # Perform security check, to make sure the target is inside the security box
         if self.security_check(target_pose) == True:
@@ -184,7 +182,7 @@ class PoseCommander(Node):
 
             # Import the newest pose to move to, according to the iterator. Perform inverse kinematics
             new_pose = self.trajectory[self.t_iterator]
-            new_pose = kinpy.Transform([new_pose[3], new_pose[4], new_pose[5]], [new_pose[0], new_pose[1], new_pose[2]])
+            new_pose = kinpy.Transform([new_pose[3], new_pose[4], new_pose[5], new_pose[6]], [new_pose[0], new_pose[1], new_pose[2]])
             new_joint_angles = self.kinematic_chain.inverse_kinematics(new_pose, self.joint_angles)
 
             # Publish new joint angles
@@ -271,9 +269,34 @@ class PoseCommander(Node):
         interpolations = int(gain * length + 1)
         self.get_logger().info(f"Interpolations: {interpolations}, Length: {length}")
 
+        # The increment between each interpolation for position
         position_increment = np.subtract(end_pose[0:3], start_pose[0:3]) * (1 / interpolations)
 
-        
+        # Create an array to store the trajectory in position and quaternions.
+        trajectory = np.zeros([interpolations, 7])
+
+        # Interpolate position. Start from start pose, and add one increment for each interpolation
+        for i in range(interpolations):
+            # Add the increment to the start pose. It is i+1 in order to start the loop increment at 1 instead of 0
+            trajectory[i, 0:3] = np.add(start_pose[0:3], np.multiply(position_increment, i + 1))
+
+        # Define components necessary to interpolate rotation
+        start_pose_RotationObject = sp.spatial.transform.Rotation.from_quat(start_pose[3:7])
+        end_pose_RotationObject = sp.spatial.transform.Rotation.from_quat(end_pose[3:7])
+        combined_RotationObject = sp.spatial.transform.Rotation.concatenate([start_pose_RotationObject, end_pose_RotationObject])
+
+        slerp_object = sp.spatial.transform.Slerp([0, 1], combined_RotationObject)
+        interpolation_times = np.linspace(0, 1, interpolations)
+
+        rotation_interpolation = slerp_object(interpolation_times)
+        interpolated_quaternions = rotation_interpolation.as_quat()
+        self.get_logger().info(f"Rotation_interpolation: {interpolated_quaternions}")
+
+        for i in range(interpolations):
+            self.get_logger().info(f"Trajectory shape: {np.shape(trajectory[i, 3:7])}, rotation shape: {np.shape(np.array(interpolated_quaternions[i]))}")
+            trajectory[i, 3:7] = interpolated_quaternions[i]
+
+        return trajectory
 
     def quaternion_to_euler(self, q):
         w, x, y, z = q
