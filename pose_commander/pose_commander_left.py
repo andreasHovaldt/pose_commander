@@ -38,7 +38,7 @@ class PoseCommander(Node):
         )
         self.kinematic_chain = kinpy.build_serial_chain_from_urdf(
             data=self.robot_description,
-            root_link_name="table",
+            root_link_name="base_frame",
             end_link_name="tool0",
         )
 
