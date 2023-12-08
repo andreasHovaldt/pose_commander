@@ -19,6 +19,7 @@ from custom_interfaces.srv import TargetPose
 # Used for visualisation in RVIZ
 from sensor_msgs.msg import JointState
 from std_msgs.msg import Header
+import scipy as sp
 
 class PoseCommander(Node):
     def __init__(self, node_name: str) -> None:
