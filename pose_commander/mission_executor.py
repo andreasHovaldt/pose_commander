@@ -64,9 +64,9 @@ class LLM_Executor_Server(Node):
         client_node.destroy_node()
 
     def send_request_right(self, pose):
-        client_node = RightPoseCommanderClient()
-        client_node.send_request_right(pose)
-        client_node.destroy_node()
+        client_node_right = RightPoseCommanderClient()
+        client_node_right.send_request_right(pose)
+        client_node_right.destroy_node()
 
     def llm_service_callback(self, request, response):
 
