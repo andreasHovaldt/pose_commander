@@ -105,7 +105,7 @@ class LLM_Executor_Server(Node):
                 right_pose.qz = float(right_orientation[2])
                 right_pose.qw = float(right_orientation[3])
                 self.get_logger().info(f"sending right pose {right_pose}")
-                #self.send_request_right(right_pose)
+                self.send_request_right(right_pose)
 
             response.success = True
             response.msg = "Executed without error."
